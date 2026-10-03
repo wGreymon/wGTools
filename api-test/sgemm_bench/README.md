@@ -1,12 +1,11 @@
-# 手写 SGEMM 与 cuBLAS 性能对比
+# CUDA 代码生成与优化能力评测
 
 测试 `C[M,N] = A[M,K] × B[K,N]`，矩阵连续、按行存储，输入、输出和累加均为 FP32，`alpha=1, beta=0`。
 
-- `sgemm_kernels.cu`：待实现的 CUDA 算子模板，保留 `sgemm_custom` 接口。
-- `sgemm_optimized.cu`：本轮调优后的 `sgemm_custom`，使用 warp 分块、16 字节向量化访问、寄存器预取和双缓冲共享内存。主路径由 128 个线程计算 64×64 输出块，每个 warp 计算 32×32，每线程累加 32 个元素；小输出使用线程块内 split-K，窄矩阵和极小矩阵走对应分支。每次测试只编译一个源码、运行一个自定义 kernel。
+- `sgemm_kernels.cu`：唯一的待实现文件，仅提供空的 `sgemm_custom` 接口和启动参数，由被测模型实现并优化。
 - `benchmark.py`：Python 标准库测试入口，通过 ctypes 调用 CUDA Driver API、NVRTC 和 cuBLAS。NVRTC 将 CUDA 算子编译为本机 GPU 的 CUBIN，不需要 nvcc、MSVC、NumPy 或 PyTorch。
 
-实现已在 RTX 4060 Laptop GPU 上调优。共享内存中的 A 使用转置及行组重排以减少 bank conflict；主路径按四行输出块分组遍历，提高 L2 缓存复用。不同 GPU 上的最佳分块和调度可能不同。
+被测模型只修改 `sgemm_kernels.cu`，评测方运行 `benchmark.py`，根据正确性、性能及通过样例数判断能力。benchmark 中的测试尺寸、参考实现、计时和评分逻辑由评测方维护。
 
 ## 运行
 
@@ -15,12 +14,12 @@
 在项目根目录执行：
 
 ```powershell
-python api-test/sgemm_bench/benchmark.py --kernel-source api-test/sgemm_bench/sgemm_optimized.cu
+python api-test/sgemm_bench/benchmark.py
 ```
 
 默认使用已审阅的 **50 组 shape**，顺序均为 `(M,N,K)`，完整清单位于 `benchmark.py` 的 `DEFAULT_SHAPES`。固定对比自定义 kernel 与 cuBLAS，每组进行全量输出校验及默认 32 个位置的独立 CPU 校验。
 
-`--kernel-source` 选择待测 CUDA 源码；省略时使用 `sgemm_kernels.cu`。当前该文件是空模板，须先实现才可通过正确性检查。以下不带此参数的示例用于已经实现的模板；测试优化版本时添加上述源码参数。
+先让被测模型实现 `sgemm_kernels.cu`，再运行上述命令。空模板不写入输出，会被正确性检查判为失败。
 
 | 测试类型 | 数量 | shape 范围或示例 |
 |---|---:|---|
@@ -75,9 +74,9 @@ Windows 优先从 `CUDA_PATH` 和 Toolkit 安装目录查找 DLL，兼容 CUDA 1
 
 笔记本 GPU 的功耗设置和温度会影响成绩。建议接通电源，在相同设置、相近温度下测量。FP32 实现的累加顺序不同，结果允许一定浮点误差；更大的 K 可能需要按精度要求调整 `--atol` 和 `--rtol`。
 
-## 替换自己的算子
+## 被测方实现接口
 
-在 `sgemm_kernels.cu` 中替换 `sgemm_custom`，保留以下接口即可：
+只修改 `sgemm_kernels.cu`，实现以下唯一的 kernel 接口；可添加设备辅助函数：
 
 ```cpp
 extern "C" __global__ void sgemm_custom(
@@ -85,18 +84,18 @@ extern "C" __global__ void sgemm_custom(
     int m, int n, int k);
 ```
 
-如果修改分块、线程数量或共享内存布局，同步修改 `benchmark.py` 中的 `Gpu.kernel_launcher`。启动规则按以下顺序匹配，`outputs=M×N`，`tiles64=ceil(M/64)×ceil(N/64)`：
+同一文件中的宏声明启动参数，benchmark 自动读取，无需修改测试脚本。每个宏只能定义一次，值必须是十进制整数字面量；省略时使用下表中的默认值。
 
-| 条件 | 输出块 BM×BN | 线程数 | K 分段数 |
-|---|---:|---:|---:|
-| K=1、单行/列、outputs≤4096 且 K≤64，或 outputs≤32768 且 K≤33 | 每线程一个输出 | 64 或 256 | 1 |
-| N<32 | 32×16 | 128 | 4 |
-| M<32 或 outputs≤32768 | 16×32 | 256 | 8 |
-| tiles64<32 且 K≥128 | 32×32 | 128 | 4 |
-| 其余 | 64×64 | 128 | 1 |
+| 宏 | 默认值 | 含义 |
+|---|---:|---|
+| `SGEMM_TILE_M` | 16 | 每个线程块覆盖的输出行数 |
+| `SGEMM_TILE_N` | 16 | 每个线程块覆盖的输出列数 |
+| `SGEMM_BLOCK_X` | 16 | 线程块 X 维度 |
+| `SGEMM_BLOCK_Y` | 16 | 线程块 Y 维度 |
+| `SGEMM_SHARED_BYTES` | 0 | 每个线程块的动态共享内存字节数 |
 
-直接计算路径使用一维 grid，不需要共享内存；outputs≤32768 的单行、单列或 K=1 使用 64 线程，其余使用 256 线程。其余路径使用 `block=(threads,1,1)`、`grid=(ceil(N/BN),ceil(M/BM),1)`，K 分块固定为 16。动态共享内存字节数为 `4×max(2×splits×16×(BM+BN), splits×BM×BN)`；split-K 在块内归约，不使用第二个 kernel、全局临时缓冲或原子累加。对齐尺寸使用无边界判断的特化，其余尺寸安全补零并限制写回范围。所有乘法和累加仍为 FP32，分段归约会改变累加顺序。
+启动方式固定为 `block=(SGEMM_BLOCK_X,SGEMM_BLOCK_Y,1)`、`grid=(ceil(N/SGEMM_TILE_N),ceil(M/SGEMM_TILE_M),1)`，动态共享内存按 `SGEMM_SHARED_BYTES` 分配。默认是 16×16 输出块和 16×16 线程块；被测模型可在该文件内调整分块、线程数量和共享内存，并自行决定计算算法。
 
-算子必须覆盖所有输出、支持矩形和边界尺寸，且不依赖 C 的初值。
+算子必须覆盖所有输出、支持矩形和边界尺寸，且不依赖 C 的初值。只运行一个自定义 kernel，乘法和累加均使用 FP32，不得调用 cuBLAS 或使用 TF32、FP16 等降低精度的替代路径。
 
 范围：连续矩阵、单次非批量 SGEMM、无转置、无自定义 leading dimension；不包含 H2D/D2H 时间，也不测试 TF32 或 FP16 Tensor Core 性能。

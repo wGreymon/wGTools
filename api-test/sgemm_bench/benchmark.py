@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import random
+import re
 import shutil
 import statistics
 import sys
@@ -24,6 +25,26 @@ FLOAT = ct.c_float
 PERFORMANCE_THRESHOLD = 0.80
 PASS_SYMBOL = "\u2713"
 FAIL_SYMBOL = "\u2717"
+
+
+def parse_launch_config(source):
+    """Read launch metadata from the submitted source without executing host code."""
+    config = {"SGEMM_TILE_M": 16, "SGEMM_TILE_N": 16,
+              "SGEMM_BLOCK_X": 16, "SGEMM_BLOCK_Y": 16,
+              "SGEMM_SHARED_BYTES": 0}
+    names = "|".join(config)
+    seen = set()
+    for name, text in re.findall(rf"^\s*#\s*define\s+({names})\b([^\r\n]*)", source, re.M):
+        if name in seen:
+            raise ValueError(f"Define {name} only once.")
+        seen.add(name)
+        value = re.fullmatch(r"\s*([0-9]+)\s*(?://.*)?", text)
+        if not value:
+            raise ValueError(f"{name} must be a decimal integer literal.")
+        config[name] = int(value.group(1))
+        if name != "SGEMM_SHARED_BYTES" and config[name] == 0:
+            raise ValueError(f"{name} must be positive.")
+    return config
 
 
 # Approved test suite. Each tuple is (M, N, K): A[M,K] * B[K,N] -> C[M,N].
@@ -197,6 +218,7 @@ class Gpu:
             "cuModuleLoadData": [ct.POINTER(PTR), PTR],
             "cuModuleGetFunction": [ct.POINTER(PTR), PTR, ct.c_char_p],
             "cuModuleUnload": [PTR],
+            "cuFuncSetAttribute": [PTR, INT, INT],
             "cuLaunchKernel": [PTR, UINT, UINT, UINT, UINT, UINT, UINT,
                                UINT, PTR, ct.POINTER(PTR), ct.POINTER(PTR)],
             "cuGetErrorName": [INT, ct.POINTER(ct.c_char_p)],
@@ -322,6 +344,7 @@ class Gpu:
         return executable
 
     def compile(self, source):
+        self.launch_config = parse_launch_config(source)
         library = self.libraries.nvrtc
         specifications = {
             "nvrtcVersion": [ct.POINTER(INT), ct.POINTER(INT)],
@@ -373,24 +396,18 @@ class Gpu:
         function = PTR()
         self.call("cuModuleGetFunction", ct.byref(function), self.module,
                   b"sgemm_custom")
-        # Keep these shape rules in sync with sgemm_custom's dispatch.
-        outputs = m * n
-        if (k == 1 or min(m, n) == 1 or (outputs <= 4096 and k <= 64)
-                or (outputs <= 32768 and k <= 33)):
-            threads = 64 if outputs <= 32768 and (k == 1 or min(m, n) == 1) else 256
-            grid_x, grid_y = (outputs + threads - 1) // threads, 1
-            shared_bytes = 0
-        else:
-            if n < 32:
-                bm, bn, splits, threads = 32, 16, 4, 128
-            elif m < 32 or outputs <= 32768:
-                bm, bn, splits, threads = 16, 32, 8, 256
-            elif (m + 63) // 64 * ((n + 63) // 64) < 32 and k >= 128:
-                bm, bn, splits, threads = 32, 32, 4, 128
-            else:
-                bm, bn, splits, threads = 64, 64, 1, 128
-            grid_x, grid_y = (n + bn - 1) // bn, (m + bm - 1) // bm
-            shared_bytes = max(2 * splits * 16 * (bm + bn), splits * bm * bn) * 4
+        config = self.launch_config
+        tile_m, tile_n = config["SGEMM_TILE_M"], config["SGEMM_TILE_N"]
+        block_x, block_y = config["SGEMM_BLOCK_X"], config["SGEMM_BLOCK_Y"]
+        shared_bytes = config["SGEMM_SHARED_BYTES"]
+        grid_x, grid_y = (n + tile_n - 1) // tile_n, (m + tile_m - 1) // tile_m
+        if (block_x > self.attribute(2) or block_y > self.attribute(3)
+                or block_x * block_y > self.attribute(1)):
+            raise ValueError("Submitted block dimensions exceed CUDA device limits.")
+        if shared_bytes > self.attribute(8):
+            if shared_bytes > self.attribute(97):
+                raise ValueError("Submitted dynamic shared memory exceeds CUDA device limits.")
+            self.call("cuFuncSetAttribute", function, 8, shared_bytes)
         if grid_x > self.attribute(5) or grid_y > self.attribute(6):
             raise ValueError("Shape exceeds CUDA grid limits for the custom kernel.")
         # Keep argument storage alive for all asynchronous launches.
@@ -401,7 +418,7 @@ class Gpu:
 
         def launch():
             self.call("cuLaunchKernel", function, grid_x, grid_y, 1,
-                      threads, 1, 1, shared_bytes, self.stream, parameters, None)
+                      block_x, block_y, 1, shared_bytes, self.stream, parameters, None)
             _ = arguments
         return launch
 
@@ -694,9 +711,6 @@ def parse_shape(text):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--kernel-source", type=Path,
-                        default=Path(__file__).with_name("sgemm_kernels.cu"),
-                        help="CUDA source exporting sgemm_custom; launch rules must match")
     parser.add_argument("--sizes", nargs="+", type=positive_int,
                         help="square matrix sizes; replaces the default shape suite")
     parser.add_argument("--shape", action="append", type=parse_shape,
@@ -732,7 +746,7 @@ def main():
     table = ConsoleTable(shapes)
     gpu = Gpu(CudaLibraries(), options.device)
     try:
-        source = options.kernel_source.read_text(encoding="utf-8")
+        source = Path(__file__).with_name("sgemm_kernels.cu").read_text(encoding="utf-8")
         gpu.compile(source)
         table.header()
         correctness_passed = performance_passed = both_passed = 0
