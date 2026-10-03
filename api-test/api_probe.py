@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""查询 OpenAI 兼容服务的模型列表。仅使用 Python 标准库。"""
+"""中转 API 探测：查询模型、检测协议兼容性并生成客户端配置模板。仅使用 Python 标准库。"""
 
 import argparse
 import getpass
@@ -552,7 +552,7 @@ def positive_tokens(value):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="查询 OpenAI 兼容服务支持的模型（无需安装第三方依赖）。",
+        description="中转 API 探测：查询模型、检测协议兼容性、生成客户端配置模板（无需安装第三方依赖）。",
         epilog="直接运行可交互输入；也可设置 MODEL_API_URL 和 MODEL_API_KEY 环境变量。",
     )
     parser.add_argument("--url", default=os.environ.get("MODEL_API_URL") or BASE_URL,
