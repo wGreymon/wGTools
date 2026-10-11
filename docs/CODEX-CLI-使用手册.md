@@ -1,6 +1,6 @@
 # Codex CLI 使用手册（跨平台）
 
-> **更新与验证：** 2026-10-06，Windows 原生 CLI 0.160.1。文中标注“本机实测”的内容只代表该版本和平台；macOS、Linux、WSL2 的命令仍应以对应版本的 `codex --help` 为准。
+> **更新与验证：** 2026-10-11，Windows 原生 CLI 0.162.1。文中标注“本机实测”或“历史记录”的内容只代表注明的版本、时间和平台；macOS、Linux、WSL2 的命令仍应以对应版本的 `codex --help` 为准。
 
 ## 目录
 
@@ -17,6 +17,7 @@
 - [11. 诊断与维护](#11-诊断与维护)
 - [12. 已知坑（本机实测）](#12-已知坑本机实测)
 - [13. 一页速查](#13-一页速查)
+- [14. 官方文档与核验顺序](#14-官方文档与核验顺序)
 
 ### 快速开始
 
@@ -73,7 +74,7 @@ curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 ```powershell
 # Windows PowerShell
-irm https://chatgpt.com/codex/install.ps1 | iex
+powershell -ExecutionPolicy Bypass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
 ```
 
 在 CI 或无交互终端中，可以显式关闭安装器提问：
@@ -90,6 +91,12 @@ $env:CODEX_NON_INTERACTIVE = "1"; irm https://chatgpt.com/codex/install.ps1 | ie
 
 ```bash
 npm install --global @openai/codex
+```
+
+macOS 也可以使用 Homebrew：
+
+```bash
+brew install --cask codex
 ```
 
 安装后重新打开终端，让 PATH 生效。Windows 若 PowerShell 阻止 `codex.ps1`，使用 `codex.cmd`；macOS/Linux/WSL2 一般使用 `codex`。
@@ -137,16 +144,16 @@ codex logout
 
 ### 1.4 升级与卸载
 
-官方安装脚本安装的版本可用：
+官方安装脚本安装的版本可重新运行安装脚本更新，也可以使用当前 CLI 提供的更新命令：
 
 ```bash
 codex update
 ```
 
-npm 安装的版本使用：
+npm 安装的版本建议使用与官方文档一致的安装命令覆盖更新：
 
 ```bash
-npm update --global @openai/codex
+npm install --global @openai/codex
 ```
 
 确认实际调用的是哪一份 CLI：
@@ -188,17 +195,17 @@ npm uninstall --global @openai/codex
 
 ## 2. Windows 本机实测：多份 CLI 的现状
 
-这台机器上有多份 Codex CLI。下表在 **2026-10-06** 整理：npm 与桌面版本已复核，VS Code 扩展保留原稿记录、未在本次路径搜索中找到。路径中的通配符表示安装目录可能随升级变化。它们是不同的可执行文件，但通常共用同一个 `CODEX_HOME`：
+这台机器上有多份 Codex CLI。下表在 **2026-10-11** 复核：npm 与桌面版本已实际运行 `--version`；VS Code 扩展路径本次未找到，保留旧记录只用于说明可能存在第三份 CLI。路径中的通配符表示安装目录可能随升级变化。它们是不同的可执行文件，但通常共用同一个 `CODEX_HOME`：
 
 | 来源 | 路径 | 本机版本 |
 |---|---|---|
-| npm 全局安装 | `%USERPROFILE%\Tools\node\node-v23.9.0-win-x64\codex.cmd` | 0.160.1 |
-| VS Code 扩展 `openai.chatgpt` 内置 | `%USERPROFILE%\.vscode\extensions\openai.chatgpt-*\bin\windows-x86_64\codex.exe` | 0.160.0（原稿记录） |
+| npm 全局安装 | `%USERPROFILE%\Tools\node\node-v23.9.0-win-x64\codex.cmd` | 0.162.1 |
+| VS Code 扩展 `openai.chatgpt` 内置 | `%USERPROFILE%\.vscode\extensions\openai.chatgpt-*\bin\windows-x86_64\codex.exe` | 本次未找到；旧稿曾记录 0.160.0 |
 | 桌面 Codex 应用内置 | `%LOCALAPPDATA%\OpenAI\Codex\bin\<版本>\codex.exe` | 0.154.0-alpha.6.2 |
 
 ```powershell
 Get-Command codex.cmd       # PowerShell 中查看实际命令路径
-codex.cmd --version         # 当前终端：codex-cli 0.160.1
+codex.cmd --version         # 当前终端：codex-cli 0.162.1
 where.exe codex.cmd         # 也可以用 Windows 的 where.exe
 ```
 
@@ -248,6 +255,8 @@ codex.cmd --version
 
 `CODEX_HOME` 默认是 `~/.codex`。Windows 原生 PowerShell 展开为 `$env:USERPROFILE\.codex`；WSL2 使用 Linux 用户的 `~/.codex`，即使 Windows 主机也设置过 `%USERPROFILE%\.codex`，两者仍是不同目录。
 
+Codex 还会在受信任项目中读取项目级 `.codex/config.toml`。项目配置适合保存模型、沙箱等项目默认值，但不能覆盖会重定向凭据或主机行为的字段，例如 `model_provider`、`model_providers`、`openai_base_url`、`profile`、`notify` 和 `otel`。这些字段应放在用户级 `$CODEX_HOME/config.toml`；profile 则通过 `--profile` / `-p` 选择。
+
 需要临时使用其他配置目录时，目录必须先存在：
 
 ```bash
@@ -270,7 +279,7 @@ sandbox_mode = "workspace-write"
 network_access = true
 ```
 
-`[windows] sandbox = "elevated"` 只适用于 Windows 原生沙箱实现，与上面的 Codex 沙箱策略不是同一个字段。macOS/Linux/WSL2 不应照抄 `[windows]` 配置。
+`[windows] sandbox = "mxc" | "elevated" | "unelevated"` 只选择 Windows 原生沙箱实现，与上面的 Codex 沙箱策略不是同一个字段。macOS/Linux/WSL2 不应照抄 `[windows]` 配置。`mxc` 不可用时，显式选择它会失败；具体兼容性以当前官方 Windows 沙箱文档和 `codex doctor` 为准。
 
 TOML 的根级默认项（例如 `model`、`model_provider`、`approval_policy`）应放在第一个 `[table]` 之前；进入 `[model_providers.*]`、`[mcp_servers.*]` 等表后，后续同名键属于该表，不会回到根级。维护多个 provider 时建议先写根级默认项，再按 provider 分块并用空行分隔，最后写 MCP、`[tui]`、`[projects.*]` 等其他区块。
 
@@ -295,23 +304,32 @@ model_reasoning_effort = "xhigh"
 name = "hangzhale"
 base_url = "https://api.hangzhale.com"
 wire_api = "responses"
-requires_openai_auth = false
-experimental_bearer_token = "YOUR_TOKEN"
+env_key = "HANGZHALE_KEY"
 
 [model_providers.modelflare]
 name = "modelflare"
 base_url = "https://modelflare.dev/v1"
 wire_api = "responses"
-requires_openai_auth = false
-experimental_bearer_token = "YOUR_TOKEN"
+env_key = "MODELFLARE_KEY"
 ```
 
 **关键点：**
 
 - 每个 provider 一个 `[model_providers.<名字>]` 区块，**名字随意取**，并列写就行
-- provider 名字可按 URL 或用途自定义。TOML 中 `[model_providers.foo]` 与 `[model_providers."foo"]` 等价；名称含空格、点号或其他特殊字符时应使用引号。数字名称也建议加引号以避免歧义
+- provider 名字可按 URL 或用途自定义。TOML 的裸键只能包含英文字母、数字、下划线和连字符；在此范围内 `[model_providers.foo]` 与 `[model_providers."foo"]` 等价。名称含空格、点号、中文、`/`、`@` 等字符时必须加引号
+- 纯数字 ID 也可以作为裸键，例如 `[model_providers.790053500]`，但为提高辨识度可以写成 `[model_providers."790053500"]`。点号尤其要注意：`[model_providers.openai.cn]` 是多层表，而 `[model_providers."openai.cn"]` 才表示 ID 为 `openai.cn` 的单个 provider
 - `wire_api` **只支持 `"responses"`**。中转必须提供 Responses API 端点，只有 Chat Completions 的接不上
 - `base_url` **按中转要求填写**：有的要带 `/v1`（如 `https://modelflare.dev/v1`），有的不带（如 `https://hubway.cc`）。Codex 会在末尾拼 `/responses`。填错会报 404 或一直重连
+- `wire_api = "responses"` 和 `requires_openai_auth = false` 都是对应情形下的默认值，可以省略；写出 `wire_api` 有助于读者看懂协议。`experimental_bearer_token` 虽仍受支持，但官方不建议把 token 直接写进配置，应优先使用 `env_key`
+- 内置 provider ID `openai`、`ollama`、`lmstudio` 是保留名称，不能用自定义表覆盖。若只想让内置 `openai` 走代理或数据驻留地址，使用根级 `openai_base_url = "..."`
+
+`model_provider` 右侧是字符串值，所以配置文件中必须写引号：
+
+```toml
+model_provider = "modelflare"
+```
+
+表头里的 provider ID 是 TOML 键，引号是否必需取决于 ID 本身；不要把这两个位置混为一谈。
 
 ### 4.2 三种切换方式
 
@@ -331,7 +349,7 @@ codex.cmd -c model_provider=modelflare
 codex.cmd resume <session-id> --no-daemon -c model_provider=modelflare
 ```
 
-执行前请把尖括号中的占位符替换为实际值。
+PowerShell 中 `codex -c model_provider=modelflare` 目前也能工作，因为无法解析为 TOML 的值会回退为普通字符串。不过推荐统一写成 `codex -c 'model_provider="modelflare"'`：外层单引号保护整个 PowerShell 参数，内层双引号明确表示 TOML 字符串，也不会在 provider ID 恰好是 `true`、`123` 等值时被解析成布尔值或数字。执行前请把尖括号中的占位符替换为实际值。
 
 ### 4.3 用命名配置叠加
 
@@ -372,7 +390,7 @@ $env:MODELFLARE_KEY = "YOUR_TOKEN"    # 仅对当前 PowerShell 窗口生效
 # setx MODELFLARE_KEY "YOUR_TOKEN"    # 写入用户环境变量；新终端才会读取
 ```
 
-实测：`env_key` 在 0.160.0 里是**合法字段**，缺变量时会明确报错 `Missing environment variable: 'MODELFLARE_KEY'`。不要在同一个 config.toml 中重复声明同名 `[model_providers.modelflare]` 表；把字段合并到已有区块，并移除明文 token。
+`env_key` 是官方支持字段；缺少对应环境变量时，Codex 会报告变量不存在。不要在同一个 config.toml 中重复声明同名 `[model_providers.modelflare]` 表；把字段合并到已有区块，并移除明文 token。
 
 ---
 
@@ -410,7 +428,7 @@ codex -c 'model="gpt-6.1-sol"'
 codex -c 'model_reasoning_effort="xhigh"'
 ```
 
-可用档位会受当前模型限制。0.160.1 交互界面中，`Shift+Tab` 切换模式，`Alt+,` 降低推理档位，`Alt+.` 提高推理档位，`/model` 打开模型和推理选择器；按 `?` 查看快捷键，`/keymap` 可自定义。⚠️ 见第 12 节：配置可能被 Codex 回写覆盖。
+可用档位会受当前模型限制。交互界面通常可用 `Shift+Tab` 切换模式，`Alt+,` 降低推理档位，`Alt+.` 提高推理档位，`/model` 打开模型和推理选择器；快捷键和斜杠命令会随版本变化，请以当前界面的 `?`、`/` 和 `/keymap` 为准。⚠️ 见第 12 节：配置可能被 Codex 回写覆盖。
 
 ---
 
@@ -430,6 +448,8 @@ codex -c 'model_reasoning_effort="xhigh"'
 | `codex update` | 升级 Codex |
 | `codex login` / `codex logout` | 管理登录 |
 | `codex mcp` | 管理 MCP 服务器 |
+| `codex plugin` | 管理插件与插件市场 |
+| `codex completion <shell>` | 生成 Bash、PowerShell、Zsh 等补全脚本 |
 | `codex sandbox` | 在沙箱里跑命令 |
 | `codex features` | 查看/开关实验特性 |
 
@@ -447,6 +467,8 @@ Windows PowerShell 若 `codex` 被执行策略拦截，使用同样参数的 `co
 --search                      启用联网搜索
 --worktree                    在新建的 git worktree 里跑
 --no-alt-screen               不用备用屏幕，保留滚动历史
+--no-daemon                   本次不用共享后台服务
+--strict-config               遇到未知配置字段立即报错
 ```
 
 > 上述参数可与 `codex` 或 Windows 的 `codex.cmd` 组合使用。完整选项以当前版本的 `codex --help` 为准。
@@ -462,7 +484,7 @@ resume_cwd = "current"  # 也可以是 "session"
 
 显式传入 `-C` 时，以命令行目录为准。
 
-当使用 `-c`、`-p`、`--enable`、`--disable` 或 `--search` 等启动覆盖项时，0.160.1 可能显示“Running without shared background server...”提示，并使用本次启动内嵌的服务；`--no-daemon` 会明确选择这种模式并抑制该提示。它不会 fork，也不会改变 session ID。`codex agents` 需要共享服务；`queue` 不能与 `--no-daemon` 组合使用，独立内嵌的 TUI 会话也不保证能被其他进程排队访问。
+某些版本在使用 `-c`、`-p`、`--enable`、`--disable` 或 `--search` 等启动覆盖项时，可能显示“Running without shared background server...”并使用本次启动内嵌的服务；`--no-daemon` 会明确选择这种模式。它不会 fork，也不会改变 session ID。`codex agents` 浏览的是共享后台服务中的会话；独立内嵌的 TUI 会话不保证能被其他进程排队访问。
 
 ---
 
@@ -508,7 +530,7 @@ codex resume <session-id> --no-daemon -c 'model_provider="hubway"'
 codex queue --thread <UUID|名字> --message "继续做 X"   # 给正在跑的会话排队消息
 codex archive <id>          # 归档
 codex unarchive <id>        # 取消归档
-codex delete <id>           # 永久删除（会提示确认）
+codex delete <id|名字>      # 永久删除（会提示确认）
 codex delete --force <UUID> # UUID 明确时跳过确认
 ```
 
@@ -552,7 +574,7 @@ Get-Content -Raw -Encoding utf8 prompt.txt |
   codex.cmd exec --skip-git-repo-check -c 'model_provider="modelflare"' --json -o answer.txt -
 ```
 
-`--json` 会把事件流输出为 JSONL；`-o/--output-last-message` 只保存最终消息，未配合 `--output-schema` 时不保证它本身是 JSON，因此示例使用 `answer.txt`。需要结构化 JSON 时另行提供 JSON Schema，例如 `--output-schema schema.json -o answer.json`。`codex exec` 还有子命令：`resume`、`fork`、`review`。Windows PowerShell 版本使用 `codex.cmd exec`。
+`--json` 会把事件流输出为 JSONL；`-o/--output-last-message` 只保存最终消息，未配合 `--output-schema` 时不保证它本身是 JSON，因此示例使用 `answer.txt`。需要结构化 JSON 时另行提供 JSON Schema，例如 `--output-schema schema.json -o answer.json`。`codex exec` 还有子命令：`resume`、`fork`、`review`；`--ephemeral` 可执行而不持久化本次 session。Windows PowerShell 版本使用 `codex.cmd exec`。
 
 `--skip-git-repo-check` 只是在非 Git 目录运行时跳过检查，并非所有评测都必需。`--ignore-user-config` 会跳过 `config.toml`，因此自定义 provider 也不会加载；不要和依赖命名 provider 的示例盲目组合。`--help` 或 TOML 解析成功只能说明参数/语法可读，不代表 provider 能完成网络推理；真正的 smoke test 仍需一次 `exec` 请求并检查退出码和输出。
 
@@ -562,7 +584,7 @@ Get-Content -Raw -Encoding utf8 prompt.txt |
 
 ## 9. 沙箱与审批
 
-Codex 有内置沙箱；Windows 使用原生受限令牌，macOS 使用 Seatbelt，Linux/WSL2 通常使用 bubblewrap。具体能力以 `codex doctor` 和当前平台的安装结果为准。
+Codex 有内置沙箱；macOS 使用 Seatbelt，Linux/WSL2 使用 bubblewrap 与 seccomp（兼容路径可能使用 Landlock），Windows 可使用 MXC 或旧版受限沙箱实现。具体能力取决于操作系统和主机支持，以官方平台文档、`codex doctor` 和当前安装结果为准。
 
 ### 9.1 沙箱模式
 
@@ -577,7 +599,7 @@ codex -s workspace-write
 codex --dangerously-bypass-approvals-and-sandbox   # 完全放开，仅限外部已隔离的环境
 ```
 
-Windows PowerShell 将 `codex` 替换为 `codex.cmd`。macOS 通常由 Seatbelt 实现沙箱，Linux/WSL2 通常依赖 `bwrap`；缺少对应系统组件时，先运行 `codex doctor` 查看诊断。平台子命令的参数形式曾随版本变化，macOS/Linux 示例不要直接假定在 Windows 可用，先运行 `codex sandbox --help`。
+Windows PowerShell 将 `codex` 替换为 `codex.cmd`。缺少平台所需能力时，先运行 `codex doctor` 查看诊断。`codex sandbox` 是平台相关的调试入口，参数形式会随操作系统和版本变化，使用前先运行 `codex sandbox --help`。
 
 ### 9.2 审批策略
 
@@ -624,7 +646,7 @@ codex.cmd sandbox -- cmd.exe /c whoami  # Windows；0.160.1 本机实测
 --sandbox-state-disable-network   关掉网络
 ```
 
-Windows 上可额外配置 `[windows] sandbox = "elevated"`；其他平台不要添加该平台专属字段。
+Windows 上可额外配置 `[windows] sandbox = "mxc" | "elevated" | "unelevated"`；其他平台不要添加该平台专属字段。
 
 ---
 
@@ -645,16 +667,19 @@ stdio 服务器需要真正实现 MCP 的 JSON-RPC 握手；`echo hi`、`cmd.exe
 ```bash
 codex mcp list
 codex mcp get <name>
+codex mcp get <name> --json
 codex mcp add <name> -- <命令> [参数...]     # stdio 服务器
 codex mcp add <name> --url <URL>             # HTTP 服务器
+codex mcp add <name> --url <URL> --bearer-token-env-var <ENV_VAR>
 codex mcp remove <name>
 codex mcp login <name>                 # 适用于支持 OAuth 的 HTTP 服务器
+codex mcp login <name> --no-browser    # 远程或无浏览器终端
 codex mcp logout <name>
 ```
 
 Windows PowerShell 将命令名换成 `codex.cmd`。MCP 的 `command` 必须是目标平台实际存在的可执行文件，不能把 `cmd.exe` 配置复制到 macOS/Linux。
 
-> ⚠️ 当前 CLI 通过是否配置 `command` 来识别 stdio 服务器；`mcp_servers.<名字>.type` 在 0.160.1 会被忽略并产生 warning，应删除。`codex mcp login/logout` 主要用于支持 OAuth 的 HTTP 服务器，不是所有 stdio 服务器都适用。
+> ⚠️ 当前 CLI 通过是否配置 `command` 来识别 stdio 服务器；旧配置中的 `mcp_servers.<名字>.type` 可能被忽略并产生 warning，应以 `codex mcp get <name> --json` 和当前配置参考为准。`codex mcp login/logout` 主要用于支持 OAuth 的 HTTP 服务器，不是所有 stdio 服务器都适用。
 
 如果出现 `MCP client ... failed to start` / `MCP startup incomplete`，先检查可执行文件路径、依赖、服务器是否真的支持 MCP 握手以及启动超时。桌面应用生成的 `node_repl` 路径可能随更新变化；已经不需要它时，可在已有区块设置 `enabled = false`，或执行 `codex mcp remove node_repl`。修改配置后需重新启动 CLI，旧启动提示不会从当前界面自动消失。
 
@@ -680,7 +705,7 @@ codex --strict-config --no-daemon  # 加载配置并进入 TUI，未提交任务
 
 **配置里有本版本不认识的字段就直接报错**。管理多个中转时可用它检查未知字段；也可以在实际 `codex exec` 命令上添加 `--strict-config`。单独运行 `--help` 会提前显示帮助，不能代替配置校验。TOML 语法有效、字段受支持与 API 请求成功是三个不同的检查。
 
-实测就是这样发现当前版本不再支持 `disable_response_storage` 的：
+旧版实测曾用这种方式发现 `disable_response_storage` 不受支持：
 
 ```
 unknown configuration field `disable_response_storage`
@@ -706,7 +731,7 @@ codex features disable <name>
 
 **⚠️ 坑 2：当前版本忽略 `disable_response_storage`**
 
-0.160.1 不认识这个字段，启动时会警告 `is ignored`。从根级配置中删掉它即可。这个键的名字涉及 API 响应存储，不能把它当作“是否保存本地 session”的开关；当前版本中它根本不会生效。
+0.160.1 不认识这个字段，启动时会警告 `is ignored`；当前官方配置参考也没有列出它。从根级配置中删掉即可。这个键的名字涉及 API 响应存储，不能把它当作“是否保存本地 session”的开关。
 
 **⚠️ 坑 3：cmd.exe 引号丢失**
 
@@ -722,7 +747,7 @@ codex features disable <name>
 
 **⚠️ 坑 6：覆盖项会切换后台服务模式**
 
-使用 `-c`、`-p`、`--enable`、`--disable`、`--search` 等覆盖项时，CLI 可能启动内嵌服务并显示 “Running without shared background server...”。`--no-daemon` 可明确选择内嵌模式并抑制该提示；它不创建新会话，也不改变 session ID。相关限制见第 6.1 节。
+使用 `-c`、`-p`、`--enable`、`--disable`、`--search` 等覆盖项时，部分版本的 CLI 可能启动内嵌服务并显示 “Running without shared background server...”。`--no-daemon` 可明确选择内嵌模式；它不创建新会话，也不改变 session ID。相关限制见第 6.1 节。
 
 **⚠️ 坑 7：验证 provider 别只看关键词**
 
@@ -776,3 +801,22 @@ Windows PowerShell 速查：把上面每行开头的 `codex` 换成 `codex.cmd`�
 **沙箱**：`read-only workspace-write danger-full-access`
 **审批**：`on-request never`
 **协议**：`wire_api = "responses"`（唯一支持）
+
+---
+
+## 14. 官方文档与核验顺序
+
+Codex 更新较快，遇到本文与实际行为不一致时，按下面顺序核验：
+
+1. 运行 `codex --version`，确认实际调用的是哪一份 CLI。
+2. 运行目标命令的 `--help`，例如 `codex resume --help` 或 `codex mcp add --help`。
+3. 使用 `codex --strict-config --no-daemon` 检查配置字段；该命令只验证本机版本是否识别配置，不能证明 provider 的网络端点可用。
+4. 查阅官方 OpenAI 文档；自定义 provider 最后仍需运行一次最小 `codex exec` 请求验证端点、凭据和 Responses 协议。
+
+常用官方入口：
+
+- [Codex CLI](https://developers.openai.com/codex/cli)
+- [高级配置](https://developers.openai.com/codex/config-advanced)
+- [配置参考](https://developers.openai.com/codex/config-reference)
+- [沙箱与审批](https://developers.openai.com/codex/agent-approvals-security)
+- [MCP](https://developers.openai.com/codex/mcp)
